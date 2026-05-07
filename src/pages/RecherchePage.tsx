@@ -1,211 +1,258 @@
-import React, { useState, useEffect } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
-import Header from "../components/Header";
-import FiltresAvances, { FiltresState } from "../components/FiltresAvances";
-import CarteProduit from "../components/CarteProduit";
-import { ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown } from "lucide-react";
+import { useState } from "react";
+import { ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Loader2, Search, Star, MapPin } from "lucide-react";
 
-export default function RecherchePage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const navigate = useNavigate();
-  
-  const queryTerm = searchParams.get("q") || "";
-  const categorieParam = searchParams.get("categorie") || "";
-  const wilayaParam = searchParams.get("wilaya") || "";
-  const prixMinParam = searchParams.get("prix_min") || "";
-  const prixMaxParam = searchParams.get("prix_max") || "";
-  const etatParam = searchParams.get("etat") || "Tous";
-  const verifieParam = searchParams.get("verifie") === "true";
+// ── Données mock pour la preview ───────────────────────────────────────────────
+const MOCK_PRODUITS = Array.from({ length: 47 }, (_, i) => ({
+  id: i + 1,
+  titre: ["iPhone 15 Pro 256Go", "Samsung Galaxy S24", "PC Portable Lenovo", "MacBook Air M2", "PlayStation 5", "Climatiseur 18000 BTU", "Réfrigérateur Samsung", "TV Samsung 55\"", "Tablette iPad Pro", "AirPods Pro"][i % 10],
+  prix: [185000, 142000, 98000, 310000, 118000, 75000, 62000, 88000, 145000, 32000][i % 10] + (i * 1000),
+  ancien_prix: i % 3 === 0 ? ([200000, 160000, 110000, 340000, 130000, 85000, 70000, 99000, 160000, 38000][i % 10]) : undefined,
+  image_url: `https://picsum.photos/seed/${i + 1}/300/200`,
+  vendeur_nom: ["TechStore", "iShop", "GigaInfo", "ElectroDZ", "MediaStore"][i % 5],
+  wilaya: ["Alger", "Oran", "Sétif", "Constantine", "Blida"][i % 5],
+  categorie: ["Smartphones", "PC Portables", "TV", "Jeux Vidéo", "Électroménager"][i % 5],
+  nb_offres: (i % 8) + 1,
+  est_meilleur_prix: i % 4 === 0,
+}));
 
-  const [produits, setProduits] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
-  const [sortOrder, setSortOrder] = useState("nouveautés");
+const PAGE_SIZE = 9;
 
-  // Fetch results based on search params
-  useEffect(() => {
-    const fetchResults = async () => {
-      setLoading(true);
-      try {
-        // Build API URL based on params
-        const params = new URLSearchParams();
-        if (queryTerm) params.append("search", queryTerm);
-        // Note: For now the server API only supports 'search'. 
-        // In a real app we would extend the backend routes to handle filters.
-        
-        const res = await fetch(`/api/produits?${params.toString()}`);
-        let data = await res.json();
+function CarteProduit({ id, titre, prix, ancien_prix, image_url, vendeur_nom, wilaya, nb_offres, est_meilleur_prix }) {
+  const reduction = ancien_prix ? Math.round((1 - prix / ancien_prix) * 100) : null;
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 overflow-hidden hover:shadow-md transition-shadow cursor-pointer group">
+      <div className="relative overflow-hidden bg-gray-100" style={{ height: 140 }}>
+        <img src={image_url} alt={titre} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" onError={e => { e.target.style.display='none'; }} />
+        {est_meilleur_prix && (
+          <span className="absolute top-2 left-2 bg-emerald-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">Meilleur prix</span>
+        )}
+        {reduction && (
+          <span className="absolute top-2 right-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">-{reduction}%</span>
+        )}
+      </div>
+      <div className="p-3">
+        <p className="text-sm font-semibold text-gray-800 leading-tight line-clamp-2 mb-2" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{titre}</p>
+        <div className="flex items-baseline gap-2 mb-1">
+          <span className="text-base font-bold text-[#00b4d8]">{prix.toLocaleString('fr-DZ')} DA</span>
+          {ancien_prix && <span className="text-xs text-gray-400 line-through">{ancien_prix.toLocaleString()} DA</span>}
+        </div>
+        <div className="flex items-center justify-between text-xs text-gray-400 mt-1">
+          <span className="flex items-center gap-1"><MapPin size={10} />{wilaya}</span>
+          <span>{nb_offres} offre{nb_offres > 1 ? 's' : ''}</span>
+        </div>
+        <div className="text-xs text-gray-400 mt-0.5 truncate">{vendeur_nom}</div>
+      </div>
+    </div>
+  );
+}
 
-        // Client-side filtering simulation since our simple server only has basic search
-        let filtered = data;
-        if (categorieParam) {
-          filtered = filtered.filter((p: any) => p.categorie === categorieParam);
-        }
-        if (wilayaParam) {
-          filtered = filtered.filter((p: any) => p.wilaya.includes(wilayaParam.split(" - ")[0]));
-        }
-        if (prixMinParam) {
-          filtered = filtered.filter((p: any) => p.prix >= Number(prixMinParam));
-        }
-        if (prixMaxParam) {
-          filtered = filtered.filter((p: any) => p.prix <= Number(prixMaxParam));
-        }
-        if (etatParam !== "Tous") {
-          filtered = filtered.filter((p: any) => p.etat === etatParam.toLowerCase());
-        }
+function Pagination({ page, pages, onPage }) {
+  const getButtons = () => {
+    if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1);
+    const btns = [1];
+    if (page > 3) btns.push("...");
+    for (let i = Math.max(2, page - 1); i <= Math.min(pages - 1, page + 1); i++) btns.push(i);
+    if (page < pages - 2) btns.push("...");
+    btns.push(pages);
+    return btns;
+  };
+  return (
+    <div className="mt-8 flex justify-center items-center gap-1 flex-wrap">
+      <button onClick={() => onPage(page - 1)} disabled={page <= 1}
+        className="p-2 rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-[#00b4d8] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+        <ChevronLeft size={18} />
+      </button>
+      {getButtons().map((btn, i) =>
+        btn === "..." ? (
+          <span key={"d" + i} className="w-8 text-center text-gray-400 text-sm">…</span>
+        ) : (
+          <button key={btn} onClick={() => onPage(btn)}
+            className={`w-9 h-9 rounded-lg text-sm font-semibold transition-colors ${btn === page ? "bg-[#00b4d8] text-white shadow-sm" : "bg-white border border-gray-200 hover:border-[#00b4d8] text-gray-700"}`}>
+            {btn}
+          </button>
+        )
+      )}
+      <button onClick={() => onPage(page + 1)} disabled={page >= pages}
+        className="p-2 rounded-lg bg-white border border-gray-200 text-gray-500 hover:text-[#00b4d8] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+        <ChevronRight size={18} />
+      </button>
+    </div>
+  );
+}
 
-        // Sorting
-        if (sortOrder === "prix_croissant") {
-          filtered.sort((a: any, b: any) => a.prix - b.prix);
-        } else if (sortOrder === "prix_decroissant") {
-          filtered.sort((a: any, b: any) => b.prix - a.prix);
-        } else {
-          // Nouveautés (default ID desc)
-          filtered.sort((a: any, b: any) => b.id - a.id);
-        }
+export default function App() {
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("nouveautes");
+  const [page, setPage] = useState(1);
+  const [scraping, setScraping] = useState(false);
+  const [input, setInput] = useState("");
 
-        setProduits(filtered);
-      } catch (err) {
-        console.error("Erreur de recherche:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+  // Filtrage + tri
+  let filtered = MOCK_PRODUITS.filter(p =>
+    !search || p.titre.toLowerCase().includes(search.toLowerCase()) ||
+    p.categorie.toLowerCase().includes(search.toLowerCase())
+  );
+  if (sort === "prix_croissant")  filtered.sort((a, b) => a.prix - b.prix);
+  if (sort === "prix_decroissant") filtered.sort((a, b) => b.prix - a.prix);
 
-    fetchResults();
-  }, [queryTerm, categorieParam, wilayaParam, prixMinParam, prixMaxParam, etatParam, verifieParam, sortOrder]);
+  const total = filtered.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, pages);
+  const produits = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  const handleFiltreChange = (filtres: FiltresState) => {
-    const newParams = new URLSearchParams(searchParams);
-    
-    if (filtres.wilaya) newParams.set("wilaya", filtres.wilaya); else newParams.delete("wilaya");
-    if (filtres.prix_min !== "") newParams.set("prix_min", String(filtres.prix_min)); else newParams.delete("prix_min");
-    if (filtres.prix_max !== "") newParams.set("prix_max", String(filtres.prix_max)); else newParams.delete("prix_max");
-    if (filtres.etat !== "Tous") newParams.set("etat", filtres.etat); else newParams.delete("etat");
-    if (filtres.categorie.length > 0) newParams.set("categorie", filtres.categorie[0]); else newParams.delete("categorie");
-    if (filtres.verifie) newParams.set("verifie", "true"); else newParams.delete("verifie");
-
-    setSearchParams(newParams);
-    setIsMobileFiltersOpen(false);
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    setScraping(true);
+    setTimeout(() => {
+      setSearch(input);
+      setScraping(false);
+      setPage(1);
+    }, 1800); // simule scraping live
   };
 
+  const goPage = (p) => { setPage(p); window.scrollTo({ top: 0, behavior: "smooth" }); };
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#0f0f0f] font-sans text-gray-900 dark:text-gray-100 flex flex-col">
-      <Header />
+    <div style={{ fontFamily: "system-ui, sans-serif", background: "#f8fafc", minHeight: "100vh" }}>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-grow w-full">
-        <div className="flex flex-col md:flex-row gap-8">
-          
-          {/* COLONNE GAUCHE : FILTRES (25%) */}
-          <aside className="w-full md:w-1/4">
-            <FiltresAvances 
-              onFiltreChange={handleFiltreChange} 
-              isOpenMobile={isMobileFiltersOpen}
-              onCloseMobile={() => setIsMobileFiltersOpen(false)}
+      {/* Header */}
+      <div style={{ background: "linear-gradient(135deg, #0077b6, #00b4d8)", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, background: "rgba(255,255,255,0.2)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Star size={20} color="white" fill="white" />
+          </div>
+          <span style={{ color: "white", fontWeight: 800, fontSize: 22 }}>Habibou</span>
+          <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, marginLeft: 4 }}>Comparateur DZ</span>
+        </div>
+        <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 12px", color: "white", fontSize: 12 }}>
+          🇩🇿 DZD
+        </div>
+      </div>
+
+      {/* Barre de recherche */}
+      <div style={{ background: "white", padding: "16px 24px", borderBottom: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
+        <form onSubmit={handleSearch} style={{ display: "flex", gap: 8, maxWidth: 700, margin: "0 auto" }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <Search size={18} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#9ca3af" }} />
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder="Rechercher un produit... (ex: iphone, climatiseur)"
+              style={{ width: "100%", paddingLeft: 40, paddingRight: 16, paddingTop: 10, paddingBottom: 10, border: "2px solid #e5e7eb", borderRadius: 10, fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border-color 0.2s" }}
+              onFocus={e => e.target.style.borderColor = "#00b4d8"}
+              onBlur={e => e.target.style.borderColor = "#e5e7eb"}
             />
-          </aside>
+          </div>
+          <button type="submit"
+            style={{ background: "#00b4d8", color: "white", border: "none", borderRadius: 10, padding: "0 20px", fontWeight: 700, fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <Search size={16} /> Chercher
+          </button>
+        </form>
+      </div>
 
-          {/* COLONNE DROITE : RÉSULTATS (75%) */}
-          <section className="w-full md:w-3/4">
-            
-            {/* EN-TÊTE RÉSULTATS */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
-                  {loading ? "Recherche en cours..." : `${produits.length} résultats pour "${queryTerm || 'tous les produits'}"`}
-                </h2>
-                <div className="text-sm text-gray-500 mt-1">
-                  Tous les prix sont en Dinars Algériens (DZD)
-                </div>
-              </div>
+      {/* Main */}
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px" }}>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button 
-                  onClick={() => setIsMobileFiltersOpen(true)}
-                  className="md:hidden flex-1 flex items-center justify-center gap-2 bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 px-4 py-2 rounded-lg text-sm font-medium"
-                >
-                  <SlidersHorizontal size={18} /> Filtres
-                </button>
-                
-                <div className="relative flex-1 sm:flex-none">
-                  <select 
-                    value={sortOrder}
-                    onChange={(e) => setSortOrder(e.target.value)}
-                    className="w-full bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 px-4 py-2 rounded-lg text-sm font-medium appearance-none pr-10 focus:ring-2 focus:ring-[#00b4d8]/20 focus:border-[#00b4d8] outline-none"
-                  >
-                    <option value="nouveautés">Nouveautés</option>
-                    <option value="prix_croissant">Prix croissant</option>
-                    <option value="prix_decroissant">Prix décroissant</option>
-                  </select>
-                  <ArrowUpDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
-                </div>
-              </div>
+        {/* En-tête résultats */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 18, color: "#111827" }}>
+              {scraping ? "🔎 Scraping Ouedkniss en cours..." : `${total} résultat${total !== 1 ? "s" : ""}${search ? ` pour "${search}"` : ""}`}
+            </div>
+            <div style={{ fontSize: 13, color: "#6b7280", marginTop: 2 }}>
+              Page {safePage}/{pages} — Prix en Dinars Algériens (DZD)
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {search && (
+              <button onClick={() => { setSearch(""); setInput(""); setPage(1); }}
+                style={{ fontSize: 12, color: "#ef4444", border: "1px solid #fca5a5", background: "#fef2f2", borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}>
+                ✕ Effacer
+              </button>
+            )}
+            <div style={{ position: "relative" }}>
+              <select value={sort} onChange={e => { setSort(e.target.value); setPage(1); }}
+                style={{ padding: "8px 36px 8px 12px", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 13, fontWeight: 500, background: "white", appearance: "none", cursor: "pointer", outline: "none" }}>
+                <option value="nouveautes">Nouveautés</option>
+                <option value="prix_croissant">Prix croissant</option>
+                <option value="prix_decroissant">Prix décroissant</option>
+              </select>
+              <ArrowUpDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "#6b7280", pointerEvents: "none" }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Banner scraping */}
+        {scraping && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "12px 16px", marginBottom: 16, color: "#1d4ed8", fontSize: 13 }}>
+            <Loader2 size={16} style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
+            <span>Aucun résultat en cache — Scraping Ouedkniss en temps réel, patiente quelques secondes...</span>
+            <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+          </div>
+        )}
+
+        {/* Grille produits */}
+        {!scraping && produits.length > 0 ? (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
+              {produits.map(p => <CarteProduit key={p.id} {...p} />)}
             </div>
 
-            {/* GRILLE DE PRODUITS */}
-            {loading ? (
-              <div className="grid grid-cols-3 lg:grid-cols-3 gap-2 md:gap-6">
-                {[...Array(6)].map((_, i) => (
-                  <div key={i} className="animate-pulse bg-white dark:bg-[#1a1a2e] rounded-xl h-40 md:h-80 border border-gray-100 dark:border-gray-800"></div>
-                ))}
-              </div>
-            ) : produits.length > 0 ? (
-              <>
-                <div className="grid grid-cols-3 lg:grid-cols-3 gap-2 md:gap-6">
-                  {produits.map((p: any) => (
-                    <CarteProduit 
-                      key={p.id}
-                      id={p.id}
-                      titre={p.titre}
-                      prix={p.prix}
-                      ancien_prix={p.ancien_prix}
-                      image_url={p.image_url}
-                      vendeur_nom={p.vendeur_nom}
-                      wilaya={p.wilaya}
-                      categorie={p.categorie}
-                      nb_offres={p.nb_offres}
-                      est_meilleur_prix={p.est_meilleur_prix}
-                    />
-                  ))}
-                </div>
+            {/* Pagination */}
+            {pages > 1 && (
+              <div style={{ marginTop: 32, display: "flex", justifyContent: "center", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                <button onClick={() => goPage(safePage - 1)} disabled={safePage <= 1}
+                  style={{ padding: 8, border: "1px solid #e5e7eb", borderRadius: 8, background: "white", cursor: safePage <= 1 ? "not-allowed" : "pointer", opacity: safePage <= 1 ? 0.4 : 1, display: "flex", alignItems: "center" }}>
+                  <ChevronLeft size={18} color="#6b7280" />
+                </button>
 
-                {/* PAGINATION SIMPLE */}
-                <div className="mt-12 flex justify-center items-center gap-2">
-                  <button className="p-2 rounded-lg bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 text-gray-500 hover:text-[#00b4d8] transition-colors disabled:opacity-50" disabled>
-                    <ChevronLeft size={20} />
-                  </button>
-                  <button className="w-10 h-10 rounded-lg bg-[#00b4d8] text-white font-bold text-sm">1</button>
-                  <button className="w-10 h-10 rounded-lg bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 hover:border-[#00b4d8] transition-colors text-sm font-medium">2</button>
-                  <button className="w-10 h-10 rounded-lg bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 hover:border-[#00b4d8] transition-colors text-sm font-medium">3</button>
-                  <span className="text-gray-400 mx-1">...</span>
-                  <button className="w-10 h-10 rounded-lg bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 hover:border-[#00b4d8] transition-colors text-sm font-medium">10</button>
-                  <button className="p-2 rounded-lg bg-white dark:bg-[#1a1a2e] border border-gray-200 dark:border-gray-800 text-gray-500 hover:text-[#00b4d8] transition-colors">
-                    <ChevronRight size={20} />
-                  </button>
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="text-6xl mb-4">🔍</div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Aucun produit trouvé</h3>
-                <p className="text-gray-500 max-w-sm">
-                  Essayez de modifier vos filtres ou effectuez une nouvelle recherche pour trouver ce que vous cherchez.
-                </p>
-                <button 
-                  onClick={() => handleFiltreChange({ wilaya: "", prix_min: "", prix_max: "", etat: "Tous", categorie: [], verifie: false })}
-                  className="mt-6 text-[#00b4d8] font-bold hover:underline"
-                >
-                  Réinitialiser tous les filtres
+                {(() => {
+                  const btns = [];
+                  if (pages <= 7) { for (let i = 1; i <= pages; i++) btns.push(i); }
+                  else {
+                    btns.push(1);
+                    if (safePage > 3) btns.push("...");
+                    for (let i = Math.max(2, safePage - 1); i <= Math.min(pages - 1, safePage + 1); i++) btns.push(i);
+                    if (safePage < pages - 2) btns.push("...");
+                    btns.push(pages);
+                  }
+                  return btns.map((btn, i) =>
+                    btn === "..." ? (
+                      <span key={"d" + i} style={{ width: 32, textAlign: "center", color: "#9ca3af", fontSize: 14 }}>…</span>
+                    ) : (
+                      <button key={btn} onClick={() => goPage(btn)}
+                        style={{ width: 36, height: 36, borderRadius: 8, border: btn === safePage ? "none" : "1px solid #e5e7eb", background: btn === safePage ? "#00b4d8" : "white", color: btn === safePage ? "white" : "#374151", fontWeight: 600, fontSize: 14, cursor: "pointer", transition: "all 0.15s" }}>
+                        {btn}
+                      </button>
+                    )
+                  );
+                })()}
+
+                <button onClick={() => goPage(safePage + 1)} disabled={safePage >= pages}
+                  style={{ padding: 8, border: "1px solid #e5e7eb", borderRadius: 8, background: "white", cursor: safePage >= pages ? "not-allowed" : "pointer", opacity: safePage >= pages ? 0.4 : 1, display: "flex", alignItems: "center" }}>
+                  <ChevronRight size={18} color="#6b7280" />
                 </button>
               </div>
             )}
-          </section>
-        </div>
-      </main>
 
-      <footer className="bg-white dark:bg-[#111] border-t border-gray-200 dark:border-gray-800 py-8 mt-auto text-center text-gray-500 dark:text-gray-400 text-sm">
-        <p>Habibou © 2026 — Tous les prix en DZD</p>
-      </footer>
+            <div style={{ textAlign: "center", marginTop: 12, fontSize: 12, color: "#9ca3af" }}>
+              Affichage {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, total)} sur {total} produits · 20/page en production
+            </div>
+          </>
+        ) : !scraping ? (
+          <div style={{ textAlign: "center", padding: "80px 20px" }}>
+            <div style={{ fontSize: 56 }}>🔍</div>
+            <div style={{ fontWeight: 700, fontSize: 20, color: "#111827", marginTop: 16 }}>Aucun produit trouvé</div>
+            <div style={{ color: "#6b7280", marginTop: 8 }}>Essaie un autre mot-clé — ex: "iphone", "samsung", "laptop"</div>
+            <button onClick={() => { setSearch(""); setInput(""); setPage(1); }}
+              style={{ marginTop: 20, color: "#00b4d8", fontWeight: 700, background: "none", border: "none", cursor: "pointer", textDecoration: "underline", fontSize: 14 }}>
+              Voir tous les produits
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
