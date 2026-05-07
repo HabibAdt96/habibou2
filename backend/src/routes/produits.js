@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/database');
 const { analyserPrix } = require('../services/analyseService');
+const { scrapeOuedkniss } = require('../scrapers/ouedkniss');
 
-// GET /api/produits  — avec filtres search, categorie, wilaya
-router.get('/', (req, res) => {
+// GET /api/produits — avec scraping live si vide
+router.get('/', async (req, res) => {
   try {
     const { search, categorie, wilaya, etat, prix_min, prix_max } = req.query;
     let query = "SELECT * FROM produits WHERE statut = 'actif'";
@@ -18,7 +19,16 @@ router.get('/', (req, res) => {
     if (prix_max) { query += ' AND prix <= ?'; params.push(Number(prix_max)); }
 
     query += ' ORDER BY id DESC LIMIT 200';
-    res.json(db.prepare(query).all(...params));
+    let produits = db.prepare(query).all(...params);
+
+    // Si vide et recherche → scraper Ouedkniss en live
+    if (produits.length === 0 && search) {
+      console.log('Aucun résultat local → scraping live pour: ' + search);
+      await scrapeOuedkniss(search, categorie || 'Autres');
+      produits = db.prepare(query).all(...params);
+    }
+
+    res.json(produits);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -43,7 +53,7 @@ router.post('/', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/produits/:id/badge-prix  (compatible BadgePrix.tsx)
+// GET /api/produits/:id/badge-prix
 router.get('/:id/badge-prix', (req, res) => {
   try {
     const prix = parseFloat(req.query.current_price || req.query.currentprice || 0);
@@ -54,24 +64,21 @@ router.get('/:id/badge-prix', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GET /api/produits/:id/historique-prix  (compatible GraphiquePrix.tsx)
+// GET /api/produits/:id/historique-prix
 router.get('/:id/historique-prix', (req, res) => {
   try {
     const produit = db.prepare('SELECT * FROM produits WHERE id = ?').get(req.params.id);
     if (!produit) return res.status(404).json({ error: 'Produit non trouvé' });
-
     let historique = db.prepare(
       'SELECT scrape_le as date, prix FROM prix_historique WHERE produit_id = ? ORDER BY scrape_le ASC'
     ).all(req.params.id);
-
-    // Générer un historique simulé réaliste si vide
     if (historique.length === 0) {
       const base = produit.prix;
       historique = Array.from({ length: 30 }, (_, i) => {
         const date = new Date();
         date.setDate(date.getDate() - (29 - i));
-        const variation = (Math.random() * 0.12 - 0.04); // -4% à +8%
-        const tendance = i > 20 ? -0.005 * (i - 20) : 0; // légère baisse récente
+        const variation = (Math.random() * 0.12 - 0.04);
+        const tendance = i > 20 ? -0.005 * (i - 20) : 0;
         return {
           date: date.toISOString().split('T')[0],
           prix: Math.max(100, Math.round(base * (1 + variation + tendance)))
